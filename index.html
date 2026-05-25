@@ -328,43 +328,45 @@
   #mute-btn:hover { color: var(--violet); }
   #mute-btn.muted { color: var(--ink-mute); }
 
-  /* ─── Mobile D-pad ──────────────────────────────────────── */
-  #dpad {
+  /* ─── Virtual Touchpad ──────────────────────────────────────── */
+  #touchpad {
     position: fixed;
-    bottom: max(env(safe-area-inset-bottom, 0px), 16px);
-    left: 50%;
-    transform: translateX(-50%);
-    display: grid;
-    grid-template-columns: repeat(3, 64px);
-    grid-template-rows: repeat(3, 64px);
-    gap: 6px;
-    z-index: 200;
+    inset: 0;
+    z-index: 210;
+    pointer-events: none;
     touch-action: none;
   }
-  /* Hide on desktop mouse devices */
-  @media (hover: hover) and (pointer: fine) { #dpad { display: none; } }
-  .dpad-btn {
-    width: 64px; height: 64px;
+  #touchpad #touch-base,
+  #touchpad #touch-thumb {
+    position: fixed;
+    pointer-events: none;
     border-radius: 50%;
-    background: rgba(13,11,26,0.75);
-    border: 1.5px solid var(--violet);
-    color: var(--violet);
-    font-size: 22px;
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-    touch-action: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    user-select: none;
-    -webkit-user-select: none;
-    box-shadow: 0 0 12px rgba(109,73,216,0.25);
+    transform: translate(-50%, -50%) scale(0.92);
+    transition: opacity 0.16s ease, transform 0.16s ease;
+    opacity: 0;
+    will-change: transform, opacity;
   }
-  .dpad-btn:active { background: rgba(109,73,216,0.38); border-color: #c4b5fd; }
-  .dpad-center {
-    display: flex; align-items: center; justify-content: center;
-    color: rgba(109,73,216,0.35); font-size: 18px; pointer-events: none;
+  #touchpad.active #touch-base,
+  #touchpad.active #touch-thumb {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
   }
+  #touchpad #touch-base {
+    width: 110px;
+    height: 110px;
+    background: rgba(14, 11, 28, 0.55);
+    border: 2px solid rgba(167, 139, 250, 0.32);
+    box-shadow: 0 18px 42px rgba(79, 70, 229, 0.24);
+    backdrop-filter: blur(10px);
+  }
+  #touchpad #touch-thumb {
+    width: 64px;
+    height: 64px;
+    background: rgba(109, 73, 216, 0.86);
+    border: 2px solid rgba(255, 255, 255, 0.45);
+    box-shadow: 0 16px 32px rgba(79, 70, 229, 0.35);
+  }
+  @media (hover: hover) and (pointer: fine) { #touchpad { display: none; } }
 </style>
 </head>
 <body>
@@ -410,7 +412,7 @@
     <div id="controls">
       <span class="key-group">
         <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>
-        <span class="verb">move</span>
+        <span class="verb">move / touch left side</span>
       </span>
       <span class="sep">·</span>
       <span class="key-group">
@@ -446,17 +448,9 @@
 
   </div></div>
 
-  <!-- Mobile D-pad (hidden on desktop via CSS media query) -->
-  <div id="dpad">
-    <span></span>
-    <button class="dpad-btn" data-dir="up">▲</button>
-    <span></span>
-    <button class="dpad-btn" data-dir="left">◀</button>
-    <span class="dpad-center">✦</span>
-    <button class="dpad-btn" data-dir="right">▶</button>
-    <span></span>
-    <button class="dpad-btn" data-dir="down">▼</button>
-    <span></span>
+  <div id="touchpad">
+    <div id="touch-base"></div>
+    <div id="touch-thumb"></div>
   </div>
 
   <script src="game.js"></script>

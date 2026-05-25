@@ -9,8 +9,93 @@ const waveEl  = document.getElementById('wave');
 
 // ─── Input ────────────────────────────────────────────────────────────────
 const keys = {};
-window.addEventListener('keydown', e => { bootAudio(); keys[e.key] = true;  e.preventDefault(); });
-window.addEventListener('keyup',   e => { keys[e.key] = false; });
+window.addEventListener('keydown', e => {
+  bootAudio();
+  keys[e.key] = true;
+  if (e.key.startsWith('Arrow') || ['w','a','s','d','W','A','S','D','Enter'].includes(e.key)) {
+    e.preventDefault();
+  }
+});
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+const joyInput = {
+  active: false,
+  origin: { x: 0, y: 0 },
+  current: { x: 0, y: 0 },
+  dx: 0,
+  dy: 0,
+  strength: 0,
+};
+
+function setupTouchpad() {
+  const pad = document.getElementById('touchpad');
+  const base = document.getElementById('touch-base');
+  const thumb = document.getElementById('touch-thumb');
+  const maxRadius = 72;
+
+  const setPosition = (el, x, y) => {
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+  };
+
+  const beginTouch = (x, y) => {
+    if (x > window.innerWidth * 0.5) return;
+    joyInput.active = true;
+    joyInput.origin = { x, y };
+    joyInput.current = { x, y };
+    joyInput.dx = 0;
+    joyInput.dy = 0;
+    joyInput.strength = 0;
+    pad.classList.add('active');
+    setPosition(base, x, y);
+    setPosition(thumb, x, y);
+  };
+
+  const updateTouch = (x, y) => {
+    if (!joyInput.active) return;
+    const dx = x - joyInput.origin.x;
+    const dy = y - joyInput.origin.y;
+    const distance = Math.hypot(dx, dy);
+    const clipped = Math.min(distance, maxRadius);
+    const angle = Math.atan2(dy, dx);
+    const tx = joyInput.origin.x + Math.cos(angle) * clipped;
+    const ty = joyInput.origin.y + Math.sin(angle) * clipped;
+
+    joyInput.current = { x: tx, y: ty };
+    joyInput.dx = clipped > 6 ? Math.cos(angle) : 0;
+    joyInput.dy = clipped > 6 ? Math.sin(angle) : 0;
+    joyInput.strength = clamp(clipped / maxRadius, 0, 1);
+    setPosition(thumb, tx, ty);
+  };
+
+  const endTouch = () => {
+    joyInput.active = false;
+    joyInput.dx = 0;
+    joyInput.dy = 0;
+    joyInput.strength = 0;
+    pad.classList.remove('active');
+  };
+
+  window.addEventListener('touchstart', event => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    beginTouch(touch.clientX, touch.clientY);
+    event.preventDefault();
+  }, { passive: false });
+
+  window.addEventListener('touchmove', event => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    updateTouch(touch.clientX, touch.clientY);
+    event.preventDefault();
+  }, { passive: false });
+
+  window.addEventListener('touchend', event => {
+    if (event.touches.length === 0) endTouch();
+  });
+  window.addEventListener('touchcancel', endTouch);
+}
+setupTouchpad();
 
 // ─── Audio ────────────────────────────────────────────────────────────────
 let AC = null, masterVol, musicVol, sfxVol;
@@ -118,6 +203,7 @@ const rand  = (a,b) => Math.random()*(b-a)+a;
 const randi = (a,b) => Math.floor(rand(a,b));
 const clamp = (v,lo,hi) => Math.max(lo,Math.min(hi,v));
 const dist  = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
+const lerp  = (a,b,f) => a + (b-a) * f;
 function lerpAngle(cur, tgt, f) {
   let d = tgt-cur; while(d>Math.PI)d-=Math.PI*2; while(d<-Math.PI)d+=Math.PI*2; return cur+d*f;
 }
@@ -130,8 +216,20 @@ function generateMap() {
   for(let r=0;r<ROWS;r++) MAP.push(new Array(COLS).fill(0));
   for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++)
     if(r===0||r===ROWS-1||c===0||c===COLS-1) MAP[r][c]=1;
-  for(let r=2;r<ROWS-2;r++) for(let c=2;c<COLS-2;c++)
-    if(Math.random()<0.22) MAP[r][c]=1;
+
+  const patchCount = 8;
+  for(let p=0;p<patchCount;p++){
+    const cx = randi(4,COLS-5);
+    const cy = randi(4,ROWS-5);
+    const radius = randi(2,4);
+    for(let dy=-radius; dy<=radius; dy++) for(let dx=-radius; dx<=radius; dx++) {
+      const rr = Math.hypot(dx,dy);
+      if(rr <= radius + rand(-0.35,0.35) && cy+dy>1 && cy+dy<ROWS-1 && cx+dx>1 && cx+dx<COLS-1) {
+        MAP[cy+dy][cx+dx] = 1;
+      }
+    }
+  }
+
   for(let r=1;r<=3;r++) for(let c=1;c<=3;c++) MAP[r][c]=0;
 }
 function isSolid(tx,ty) {
@@ -185,7 +283,8 @@ function drawTiles() {
 // ─── Raven ────────────────────────────────────────────────────────────────
 function drawRaven(x,y,dir,flap,hp) {
   ctx.save(); ctx.translate(x,y);
-  if(dir==='left') ctx.scale(-1,1);
+  if (typeof dir === 'number') ctx.rotate(dir);
+  else if(dir==='left') ctx.scale(-1,1);
   else if(dir==='up')   ctx.rotate(-Math.PI/2);
   else if(dir==='down') ctx.rotate( Math.PI/2);
   const fo=Math.sin(flap*0.4)*5, immune=hasWalnutImmunity();
@@ -221,116 +320,142 @@ function drawRaven(x,y,dir,flap,hp) {
 
 // ─── Eagle (enemy) ────────────────────────────────────────────────────────
 // Drawn facing +x (right). Rotated by eagle.drawAngle each frame to face movement direction.
-// Wings extend ±y (perpendicular). sign=-1 → top wing; sign=1 → bottom wing.
 function drawEagle(eagle, t) {
   ctx.save();
-  ctx.translate(eagle.x-cam.x, eagle.y-cam.y);
+  ctx.translate(eagle.x - cam.x, eagle.y - cam.y);
   ctx.rotate(eagle.drawAngle);
 
-  const fl   = Math.sin(t*7+eagle.phase);     // flap cycle  −1…1
-  const span = 29 + fl*7;                      // half-span   22…36 px
-  const swp  = fl*3;                           // tip sweeps back on downstroke
+  const speed = Math.hypot(eagle.vx, eagle.vy);
+  const flap = eagle.flap || Math.sin(t * 5 + eagle.phase);
+  const wingBend = Math.sin(flap * 2.1) * 4;
+  const sweep = 0.42 + Math.abs(flap) * 0.16 + clamp(speed * 0.06, 0, 0.24);
+  const baseSpan = 28 + clamp(speed * 5.2, 0, 14);
+  const verticalFlow = Math.sin(t * 3.3 + eagle.phase * 1.4) * 5.4;
+  const tipPitch = 16 + Math.abs(flap) * 9;
+  const rootY = wingBend * 0.65;
 
-  // Ground shadow
-  ctx.fillStyle='rgba(0,0,0,0.18)';
-  ctx.beginPath(); ctx.ellipse(1,7,24,10,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.beginPath();
+  ctx.ellipse(2, 9, 30 + speed * 1.2, 12, 0, 0, Math.PI * 2);
+  ctx.fill();
 
-  // ── Wings (both halves via forEach) ──
+  const coreTone = '#4e3420';
+  const covertTone = '#8c6239';
+  const highlightTone = '#d6b16f';
+  const primaryTone = '#2a160b';
+
   [-1, 1].forEach(sign => {
-    const tipX = -9 - swp*0.4;
-    const tipY = sign*(span + swp*sign*0.5);   // signed tip position
+    const rootX = -3;
+    const rootOffsetY = sign * rootY;
+    const wingTipX = rootX + baseSpan + tipPitch * 0.8;
+    const wingTipY = sign * (baseSpan * 0.35 + verticalFlow * 0.9) + rootOffsetY * 0.45;
+    const midX = rootX + baseSpan * 0.4 + Math.cos(flap * 1.1) * 8;
+    const midY = sign * (baseSpan * 0.22 + Math.sin(t * 3 + eagle.phase) * 6) + rootOffsetY * 0.25;
 
-    // Outer wing — deep brown
-    ctx.fillStyle='#5c3a18';
+    ctx.fillStyle = coreTone;
     ctx.beginPath();
-    ctx.moveTo(10, sign*3);
-    ctx.bezierCurveTo(5, sign*span*.38,  -5, sign*span*.80 + sign*swp*.55, tipX, tipY);
-    ctx.lineTo(tipX-3, tipY+sign*4);
-    ctx.lineTo(tipX+1, tipY+sign*6);
-    ctx.lineTo(tipX+5, tipY+sign*4);
-    ctx.bezierCurveTo(tipX+10, sign*span*.76, 11, sign*span*.34, 12, sign*3);
-    ctx.closePath(); ctx.fill();
+    ctx.moveTo(rootX, rootOffsetY);
+    ctx.bezierCurveTo(rootX + 10, sign * 8, midX, midY, wingTipX, wingTipY);
+    ctx.lineTo(wingTipX - 4, wingTipY + sign * 6);
+    ctx.quadraticCurveTo(rootX + 12, sign * 22, rootX + 8, sign * 18);
+    ctx.closePath();
+    ctx.fill();
 
-    // Secondary coverts — medium brown
-    ctx.fillStyle='#7a5228';
+    ctx.fillStyle = covertTone;
     ctx.beginPath();
-    ctx.moveTo(9, sign*2.5);
-    ctx.bezierCurveTo(5, sign*span*.32, -3, sign*span*.70 + sign*swp*.4, tipX+2, sign*span*.82 + sign*swp*.55);
-    ctx.bezierCurveTo(tipX+7, sign*span*.80, 9, sign*span*.65, 10, sign*2.5);
-    ctx.closePath(); ctx.fill();
+    ctx.moveTo(rootX + 2, sign * 2);
+    ctx.quadraticCurveTo(rootX + baseSpan * 0.18, sign * (baseSpan * 0.18), wingTipX - 8, wingTipY * 0.72);
+    ctx.lineTo(wingTipX - 8, wingTipY + sign * 4);
+    ctx.lineTo(rootX + 8, sign * 16);
+    ctx.closePath();
+    ctx.fill();
 
-    // Inner coverts — warm tan
-    ctx.fillStyle='#9b6e3a';
+    ctx.fillStyle = highlightTone;
     ctx.beginPath();
-    ctx.moveTo(8, sign*2);
-    ctx.bezierCurveTo(5, sign*span*.24, 1, sign*span*.48, -1, sign*span*.56);
-    ctx.bezierCurveTo(3, sign*span*.56, 7, sign*span*.42, 9, sign*2);
-    ctx.closePath(); ctx.fill();
+    ctx.moveTo(rootX + 4, sign * 2);
+    ctx.quadraticCurveTo(rootX + baseSpan * 0.1, sign * (baseSpan * 0.12), rootX + baseSpan * 0.24, sign * (baseSpan * 0.42));
+    ctx.lineTo(rootX + 6, sign * 6);
+    ctx.closePath();
+    ctx.fill();
 
-    // ── Primary feathers — 6 dark "fingers" fanning from wing tip ──
-    for(let p=0; p<6; p++) {
-      const pr = p/5;
-      const fBaseX = tipX - 4 + pr*12;
-      const fBaseY = tipY;
-      const fExt   = sign*(4.5 + Math.sin(pr*Math.PI)*2.5);   // middle ones longest
-      ctx.fillStyle = p%2===0 ? '#2a1606' : '#3d2208';
+    for (let i = 0; i < 7; i++) {
+      const step = i / 6;
+      const fLen = 11 + step * 14 + Math.abs(flap) * 1.8;
+      const fBaseX = rootX + baseSpan * 0.44 + step * 11;
+      const fBaseY = sign * (baseSpan * 0.18 + step * 12);
+      const fTipX = fBaseX + fLen * 0.62;
+      const fTipY = fBaseY + sign * (7 + step * 6);
+      ctx.fillStyle = i % 2 === 0 ? primaryTone : '#3d2311';
       ctx.beginPath();
-      ctx.moveTo(fBaseX-1.5, fBaseY);
-      ctx.bezierCurveTo(fBaseX-1, fBaseY+fExt*.5, fBaseX+.5, fBaseY+fExt, fBaseX+.5, fBaseY+fExt+sign*1);
-      ctx.bezierCurveTo(fBaseX+2, fBaseY+fExt, fBaseX+2, fBaseY+fExt*.5, fBaseX+2.5, fBaseY);
-      ctx.closePath(); ctx.fill();
-      // Feather shaft
-      ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=0.4;
-      ctx.beginPath(); ctx.moveTo(fBaseX+.5, fBaseY); ctx.lineTo(fBaseX+.5, fBaseY+fExt); ctx.stroke();
+      ctx.moveTo(fBaseX, fBaseY);
+      ctx.quadraticCurveTo(fBaseX + fLen * 0.22, fBaseY + sign * (fLen * 0.24), fTipX, fTipY);
+      ctx.lineTo(fTipX - 4, fTipY - sign * 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.24)';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(fBaseX + 1, fBaseY + sign * 1);
+      ctx.lineTo(fTipX - 3, fTipY - sign * 1.5);
+      ctx.stroke();
     }
 
-    // Leading-edge outline for definition
-    ctx.strokeStyle='#2d1808'; ctx.lineWidth=0.6;
+    ctx.strokeStyle = 'rgba(18,10,6,0.45)';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(10, sign*3);
-    ctx.bezierCurveTo(5, sign*span*.38, -5, sign*span*.80+sign*swp*.55, tipX, tipY);
+    ctx.moveTo(rootX, rootOffsetY);
+    ctx.quadraticCurveTo(rootX + 12, sign * 9, midX, midY);
+    ctx.lineTo(wingTipX, wingTipY);
     ctx.stroke();
   });
 
-  // ── Body ──
-  ctx.fillStyle='#3d2408';
-  ctx.beginPath(); ctx.ellipse(2,0,13,6,0,0,Math.PI*2); ctx.fill();
-  // Belly/chest stripe
-  ctx.fillStyle='#c8a060';
-  ctx.beginPath(); ctx.ellipse(3,0,6,3.5,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#402814';
+  ctx.beginPath(); ctx.ellipse(0, 0, 14, 7, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = highlightTone;
+  ctx.beginPath(); ctx.ellipse(4, 0, 6, 3.5, 0, 0, Math.PI * 2); ctx.fill();
 
-  // ── Tail ──
-  ctx.fillStyle='#2d1808';
-  ctx.beginPath(); ctx.moveTo(-10,-5); ctx.lineTo(-25,-8); ctx.lineTo(-23,0); ctx.lineTo(-25,8); ctx.lineTo(-10,5); ctx.closePath(); ctx.fill();
-  ctx.fillStyle='#4a2d10';
-  ctx.beginPath(); ctx.moveTo(-10,-3); ctx.lineTo(-23,-5); ctx.lineTo(-21,0); ctx.lineTo(-10,3); ctx.closePath(); ctx.fill();
-  // Tail banding
-  ctx.strokeStyle='#1a0a04'; ctx.lineWidth=0.7;
-  [-14,-18].forEach(x=>{ctx.beginPath();ctx.moveTo(x,-5);ctx.lineTo(x,5);ctx.stroke();});
+  ctx.fillStyle = '#f2edde';
+  ctx.beginPath(); ctx.ellipse(18, 0, 6, 5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#130a03';
+  ctx.beginPath(); ctx.arc(18, -1.6, 1.4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(19, -2.1, 0.5, 0, Math.PI * 2); ctx.fill();
 
-  // ── White head (bald-eagle) ──
-  ctx.fillStyle='#f0ede0';
-  ctx.beginPath(); ctx.ellipse(16,0,7,5.5,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#e1a22e';
+  ctx.beginPath();
+  ctx.moveTo(23, -1.8);
+  ctx.lineTo(31, -1.2);
+  ctx.quadraticCurveTo(34, 1.6, 29.2, 3.8);
+  ctx.lineTo(23, 2.2);
+  ctx.closePath();
+  ctx.fill();
 
-  // Eye — fierce amber
-  ctx.shadowColor='#f59e0b'; ctx.shadowBlur=7;
-  ctx.fillStyle='#f59e0b'; ctx.beginPath(); ctx.arc(17,-1.5,2.8,0,Math.PI*2); ctx.fill();
-  ctx.shadowBlur=0;
-  ctx.fillStyle='#0a0400'; ctx.beginPath(); ctx.arc(17,-1.5,1.5,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#fff';    ctx.beginPath(); ctx.arc(17.6,-2,0.55,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#f5ca4b';
+  ctx.beginPath();
+  ctx.moveTo(23, -1.8);
+  ctx.lineTo(30.2, -1.2);
+  ctx.lineTo(28.2, 0.8);
+  ctx.lineTo(23.1, -0.4);
+  ctx.closePath();
+  ctx.fill();
 
-  // ── Hooked beak ──
-  ctx.fillStyle='#e8930a';
-  ctx.beginPath(); ctx.moveTo(21,-1.5); ctx.lineTo(30,-0.8); ctx.quadraticCurveTo(32,1,29,3.5); ctx.lineTo(21,2); ctx.closePath(); ctx.fill();
-  // Upper mandible highlight
-  ctx.fillStyle='#fbbf24';
-  ctx.beginPath(); ctx.moveTo(21,-1.5); ctx.lineTo(30,-0.8); ctx.lineTo(28,0.2); ctx.lineTo(21,-0.4); ctx.closePath(); ctx.fill();
-  // Tip hook
-  ctx.fillStyle='#c57a06';
-  ctx.beginPath(); ctx.moveTo(28,1); ctx.quadraticCurveTo(32,2,29,3.5); ctx.lineTo(27,2.5); ctx.closePath(); ctx.fill();
-  // Nostril
-  ctx.fillStyle='rgba(0,0,0,0.35)';
-  ctx.beginPath(); ctx.ellipse(23,-0.8,1.2,0.7,-0.2,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#b7700f';
+  ctx.beginPath();
+  ctx.moveTo(27.5, 0.9);
+  ctx.quadraticCurveTo(31, 1.8, 28.8, 4.0);
+  ctx.lineTo(27.2, 3.2);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = '#2c1809';
+  ctx.beginPath();
+  ctx.moveTo(-10, -5);
+  ctx.lineTo(-26, -8);
+  ctx.lineTo(-23, 0);
+  ctx.lineTo(-26, 8);
+  ctx.lineTo(-10, 5);
+  ctx.closePath();
+  ctx.fill();
 
   ctx.restore();
 }
@@ -567,7 +692,6 @@ const PLAYER_SPEED=2.5, PLAYER_R=12;
 const player={x:1*TILE+TILE/2, y:1*TILE+TILE/2, vx:0,vy:0, hp:100,maxHp:100, dir:'right', flap:0, invincible:0, score:0, wave:1};
 let orbs=[], eagles=[], peanuts=[], walnuts=[];
 let gameOver=false, gameWon=false, t=0, waveStartTime=0;
-let targetX=null, targetY=null, bufferedInput=null;
 let walnutImmunityEnd=0;
 function hasWalnutImmunity(){ return t<walnutImmunityEnd; }
 
@@ -584,9 +708,10 @@ function spawnEagles(n,w){
   for(let i=0;i<n;i++){
     const p=validFloorPos();
     const initAng=Math.atan2(player.y-p.y, player.x-p.x);
-    eagles.push({x:p.x,y:p.y,targetX:p.x,targetY:p.y,
+    eagles.push({x:p.x,y:p.y,
+      vx:0, vy:0,
       speed:1.6+(w-1)*.3,          // scales 1.6 → 2.8 over waves
-      phase:rand(0,Math.PI*2), hp:1,
+      phase:rand(0,Math.PI*2), wingCycle: rand(0,Math.PI*2), flap: 0, hp:1,
       dir:initAng, drawAngle:initAng});
   }
 }
@@ -594,8 +719,9 @@ function spawnEagles(n,w){
 function startWave(w){
   player.wave=w; waveEl.textContent=w;
   generateMap(); orbs=[]; eagles=[]; peanuts=[]; walnuts=[];
-  targetX=1*TILE+TILE/2; targetY=1*TILE+TILE/2;
-  player.x=targetX; player.y=targetY; player.dir='right';
+  player.x = 1 * TILE + TILE / 2;
+  player.y = 1 * TILE + TILE / 2;
+  player.dir = 'right';
   spawnOrbs(5+w*2);
   spawnEagles(2+w*2, w);
   spawnPeanuts(2+Math.floor(w/2));   // 2–4
@@ -612,54 +738,69 @@ function circleVsMap(cx,cy,r){
 }
 
 // ─── Update player ────────────────────────────────────────────────────────
-function updatePlayer(){
-  const L=keys['ArrowLeft'] ||keys['a']||keys['A'];
-  const R=keys['ArrowRight']||keys['d']||keys['D'];
-  const U=keys['ArrowUp']   ||keys['w']||keys['W'];
-  const D=keys['ArrowDown'] ||keys['s']||keys['S'];
-  if(targetX===null)targetX=player.x; if(targetY===null)targetY=player.y;
-  if(L)bufferedInput='left'; if(R)bufferedInput='right';
-  if(U)bufferedInput='up';   if(D)bufferedInput='down';
-  if(player.x===targetX&&player.y===targetY){
-    let dx=0,dy=0,ch=bufferedInput;
-    if(!ch){if(L)ch='left';else if(R)ch='right';else if(U)ch='up';else if(D)ch='down';}
-    if(ch==='left')dx=-1; if(ch==='right')dx=1; if(ch==='up')dy=-1; if(ch==='down')dy=1;
-    if(dx||dy){
-      const ntx=player.x+dx*TILE, nty=player.y+dy*TILE;
-      if(dx&&!circleVsMap(ntx,player.y,PLAYER_R)){targetX=ntx;player.dir=ch;bufferedInput=null;}
-      else if(dy&&!circleVsMap(player.x,nty,PLAYER_R)){targetY=nty;player.dir=ch;bufferedInput=null;}
-      else bufferedInput=null;
-    }
+function updatePlayer() {
+  const kbX = (keys['ArrowRight']||keys['d']||keys['D']) ? 1 : (keys['ArrowLeft']||keys['a']||keys['A']) ? -1 : 0;
+  const kbY = (keys['ArrowDown']||keys['s']||keys['S']) ? 1 : (keys['ArrowUp']||keys['w']||keys['W']) ? -1 : 0;
+  let dx = 0, dy = 0;
+  let speed = PLAYER_SPEED;
+
+  if (joyInput.active && (joyInput.dx || joyInput.dy)) {
+    dx = joyInput.dx;
+    dy = joyInput.dy;
+    speed *= 0.45 + 0.55 * joyInput.strength;
+  } else if (kbX || kbY) {
+    const len = Math.hypot(kbX, kbY);
+    if (len > 0) { dx = kbX / len; dy = kbY / len; }
   }
-  if(player.x!==targetX){const sx=Math.sign(targetX-player.x)*PLAYER_SPEED;if(Math.abs(targetX-player.x)<=PLAYER_SPEED)player.x=targetX;else{player.x+=sx;player.flap++;}}
-  if(player.y!==targetY){const sy=Math.sign(targetY-player.y)*PLAYER_SPEED;if(Math.abs(targetY-player.y)<=PLAYER_SPEED)player.y=targetY;else{player.y+=sy;player.flap++;}}
-  if(player.invincible>0)player.invincible--;
+
+  if (dx || dy) {
+    const nextX = player.x + dx * speed;
+    const nextY = player.y + dy * speed;
+    if (!circleVsMap(nextX, player.y, PLAYER_R)) player.x = nextX;
+    if (!circleVsMap(player.x, nextY, PLAYER_R)) player.y = nextY;
+    player.flap += 0.22 + Math.abs(dx * dy) * 0.08;
+    player.dir = Math.atan2(dy, dx);
+  }
+
+  if (player.invincible > 0) player.invincible--;
 }
 
 // ─── Update eagles ────────────────────────────────────────────────────────
-function updateEagles(){
-  for(const e of eagles){
-    if(e.x===e.targetX&&e.y===e.targetY){
-      const etx=Math.floor(e.x/TILE), ety=Math.floor(e.y/TILE);
-      const ptx=Math.floor(player.x/TILE), pty=Math.floor(player.y/TILE);
-      const opts=[{tx:etx+1,ty:ety},{tx:etx-1,ty:ety},{tx:etx,ty:ety+1},{tx:etx,ty:ety-1}];
-      let best=null, minD=Infinity;
-      for(const o of opts) if(!isSolid(o.tx,o.ty)){const d=Math.hypot(o.tx-ptx,o.ty-pty);if(d<minD){minD=d;best=o;}}
-      if(best){
-        e.targetX=best.tx*TILE+TILE/2; e.targetY=best.ty*TILE+TILE/2;
-        e.dir=Math.atan2(e.targetY-e.y, e.targetX-e.x);   // face movement direction
-      }
-    }
-    if(e.x!==e.targetX){const sx=Math.sign(e.targetX-e.x)*e.speed;if(Math.abs(e.targetX-e.x)<=e.speed)e.x=e.targetX;else e.x+=sx;}
-    if(e.y!==e.targetY){const sy=Math.sign(e.targetY-e.y)*e.speed;if(Math.abs(e.targetY-e.y)<=e.speed)e.y=e.targetY;else e.y+=sy;}
-    // Smooth head/body rotation
-    e.drawAngle=lerpAngle(e.drawAngle, e.dir, 0.13);
-    // Deal damage
-    if(player.invincible===0&&!hasWalnutImmunity()&&dist(e,player)<PLAYER_R+14){
-      player.hp=Math.max(0,player.hp-8); player.invincible=60;
-      triggerFlash('#dc2626',0.4); triggerShake(7); sfxHit();
-      hpEl.textContent=player.hp;
-      if(player.hp<=0)gameOver=true;
+function updateEagles() {
+  for (const e of eagles) {
+    e.wingCycle += 0.24 + Math.abs(e.speed) * 0.03;
+    e.flap = Math.sin(e.wingCycle);
+
+    const toPlayer = Math.atan2(player.y - e.y, player.x - e.x);
+    const localDrift = Math.sin(t * 0.9 + e.phase) * 0.28;
+    const desiredAngle = toPlayer + localDrift * (e.speed * 0.16);
+    const desiredVx = Math.cos(desiredAngle) * e.speed;
+    const desiredVy = Math.sin(desiredAngle) * e.speed;
+    const blend = 0.05 + Math.min(0.14, e.speed * 0.016);
+    e.vx = lerp(e.vx, desiredVx, blend);
+    e.vy = lerp(e.vy, desiredVy, blend);
+
+    const nextX = e.x + e.vx;
+    const nextY = e.y + e.vy;
+    const minX = TILE * 1.5;
+    const maxX = COLS * TILE - TILE * 1.5;
+    const minY = TILE * 1.5;
+    const maxY = ROWS * TILE - TILE * 1.5;
+    if (nextX < minX || nextX > maxX) e.vx *= -0.9;
+    if (nextY < minY || nextY > maxY) e.vy *= -0.9;
+
+    e.x += e.vx;
+    e.y += e.vy;
+    e.drawAngle = lerpAngle(e.drawAngle, Math.atan2(e.vy, e.vx), 0.16);
+
+    if (player.invincible === 0 && !hasWalnutImmunity() && dist(e, player) < PLAYER_R + 16) {
+      player.hp = Math.max(0, player.hp - 8);
+      player.invincible = 60;
+      triggerFlash('#dc2626', 0.4);
+      triggerShake(7);
+      sfxHit();
+      hpEl.textContent = player.hp;
+      if (player.hp <= 0) gameOver = true;
     }
   }
 }
@@ -745,25 +886,11 @@ window.addEventListener('keydown',e=>{if((gameOver||gameWon)&&e.key==='Enter')re
 canvas.addEventListener('touchstart',e=>{e.preventDefault();bootAudio();if(gameOver||gameWon)resetGame();},{passive:false});
 function resetGame(){
   player.hp=100; player.score=0; player.invincible=0; player.flap=0; player.dir='right';
-  bufferedInput=null; gameOver=false; gameWon=false;
+  gameOver=false; gameWon=false;
   gameOverSfxPlayed=false; gameWonSfxPlayed=false; walnutImmunityEnd=0;
   hpEl.textContent=100; scoreEl.textContent=0; particles.length=0; t=0;
   startWave(1);
 }
-
-// ─── Mobile D-pad ─────────────────────────────────────────────────────────
-function setupDpad(){
-  const km={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight'};
-  document.querySelectorAll('.dpad-btn').forEach(btn=>{
-    const key=km[btn.dataset.dir];
-    const on =e=>{e.preventDefault();bootAudio();keys[key]=true;};
-    const off=e=>{e.preventDefault();keys[key]=false;};
-    btn.addEventListener('touchstart',on,{passive:false}); btn.addEventListener('touchend',off,{passive:false});
-    btn.addEventListener('touchcancel',off,{passive:false});
-    btn.addEventListener('mousedown',on); btn.addEventListener('mouseup',off); btn.addEventListener('mouseleave',off);
-  });
-}
-setupDpad();
 
 // ─── Main loop ────────────────────────────────────────────────────────────
 function loop(){
